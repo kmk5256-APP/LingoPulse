@@ -143,6 +143,10 @@
     let history = [];
     let animationId;
 
+    function getLangCode(full) {
+      return full.split('-')[0];
+    }
+
     // Simple waveform animation
     function drawWave(amplitude = 0.3) {
       const width = canvas.width = canvas.offsetWidth;
@@ -183,8 +187,9 @@
         originalText.textContent = display || 'Listening…';
 
         if (final) {
+          const sourceCode = getLangCode(document.getElementById('sourceLang').value);
           const target = document.getElementById('targetLang').value;
-          const translated = await translateText(final, target);
+          const translated = await translateText(final, sourceCode, target);
           translatedText.textContent = translated;
           addToHistory(final, translated);
         }
@@ -196,10 +201,10 @@
       };
     }
 
-    async function translateText(text, target) {
+    async function translateText(text, source, target) {
+      if (source === target) return text;
       try {
-        // Using MyMemory free API (no key required for low volume)
-        const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|${target}`);
+        const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${source}|${target}`);
         const data = await res.json();
         return data.responseData.translatedText || text;
       } catch (err) {
