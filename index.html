@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LingoPulse — Live Voice Translation</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --text: #e2e8f0;
+      --accent: #38bdf8;
+      --muted: #94a3b8;
+    }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 20px;
+      min-height: 100vh;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { color: var(--accent); margin-bottom: 8px; }
+    .subtitle { color: var(--muted); margin-bottom: 24px; }
+    .controls { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; align-items: center; }
+    select, button {
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: none;
+      background: var(--card);
+      color: var(--text);
+      font-size: 15px;
+    }
+    button { background: var(--accent); color: #0f172a; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .wave {
+      height: 60px;
+      background: var(--card);
+      border-radius: 12px;
+      margin: 16px 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    canvas { width: 100%; height: 60px; }
+    .captions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 20px 0;
+    }
+    .caption-box {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 16px;
+      min-height: 120px;
+    }
+    .caption-box h3 { margin: 0 0 8px; color: var(--accent); font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .live-text { font-size: 18px; line-height: 1.5; min-height: 60px; }
+    .history {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 16px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .history-item { padding: 8px 0; border-bottom: 1px solid #334155; font-size: 14px; }
+    .history-item strong { color: var(--accent); }
+    @media (max-width: 600px) {
+      .captions { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>LingoPulse</h1>
+    <p class="subtitle">Live voice-to-text translation · Dual captions · Privacy first</p>
+
+    <div class="controls">
+      <select id="sourceLang">
+        <option value="en-US">English</option>
+        <option value="es-ES">Spanish</option>
+        <option value="fr-FR">French</option>
+        <option value="de-DE">German</option>
+        <option value="zh-CN">Chinese</option>
+        <option value="hi-IN">Hindi</option>
+        <option value="ja-JP">Japanese</option>
+        <option value="ko-KR">Korean</option>
+        <option value="pt-BR">Portuguese</option>
+        <option value="ar-SA">Arabic</option>
+      </select>
+      <span>→</span>
+      <select id="targetLang">
+        <option value="es">Spanish</option>
+        <option value="en">English</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+        <option value="zh">Chinese</option>
+        <option value="hi">Hindi</option>
+        <option value="ja">Japanese</option>
+        <option value="ko">Korean</option>
+        <option value="pt">Portuguese</option>
+        <option value="ar">Arabic</option>
+      </select>
+      <button id="startBtn">Start Listening</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <button id="exportBtn">Export History</button>
+    </div>
+
+    <div class="wave">
+      <canvas id="waveCanvas"></canvas>
+    </div>
+
+    <div class="captions">
+      <div class="caption-box">
+        <h3>Original</h3>
+        <div id="originalText" class="live-text">Listening…</div>
+      </div>
+      <div class="caption-box">
+        <h3>Translation</h3>
+        <div id="translatedText" class="live-text">Waiting for speech…</div>
+      </div>
+    </div>
+
+    <h3>Conversation History</h3>
+    <div id="history" class="history"></div>
+  </div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const originalText = document.getElementById('originalText');
+    const translatedText = document.getElementById('translatedText');
+    const historyEl = document.getElementById('history');
+    const canvas = document.getElementById('waveCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let recognition;
+    let isListening = false;
+    let history = [];
+    let animationId;
+
+    // Simple waveform animation
+    function drawWave(amplitude = 0.3) {
+      const width = canvas.width = canvas.offsetWidth;
+      const height = canvas.height = 60;
+      ctx.clearRect(0, 0, width, height);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let x = 0; x < width; x++) {
+        const y = height / 2 + Math.sin((x + Date.now() / 50) * 0.05) * (amplitude * 20);
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      if (isListening) animationId = requestAnimationFrame(() => drawWave(0.4 + Math.random() * 0.3));
+    }
+
+    function initRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert('Speech recognition not supported in this browser. Try Chrome or Edge.');
+        return;
+      }
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = document.getElementById('sourceLang').value;
+
+      recognition.onresult = async (event) => {
+        let interim = '';
+        let final = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) final += transcript;
+          else interim += transcript;
+        }
+        const display = final || interim;
+        originalText.textContent = display || 'Listening…';
+
+        if (final) {
+          const target = document.getElementById('targetLang').value;
+          const translated = await translateText(final, target);
+          translatedText.textContent = translated;
+          addToHistory(final, translated);
+        }
+      };
+
+      recognition.onerror = (e) => console.error(e);
+      recognition.onend = () => {
+        if (isListening) recognition.start();
+      };
+    }
+
+    async function translateText(text, target) {
+      try {
+        // Using MyMemory free API (no key required for low volume)
+        const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|${target}`);
+        const data = await res.json();
+        return data.responseData.translatedText || text;
+      } catch (err) {
+        return text + ' (translation unavailable)';
+      }
+    }
+
+    function addToHistory(orig, trans) {
+      const item = { orig, trans, time: new Date().toLocaleTimeString() };
+      history.unshift(item);
+      if (history.length > 50) history.pop();
+      renderHistory();
+    }
+
+    function renderHistory() {
+      historyEl.innerHTML = history.map(h =>
+        `<div class="history-item"><strong>${h.time}</strong><br>${h.orig}<br>→ ${h.trans}</div>`
+      ).join('');
+    }
+
+    startBtn.onclick = () => {
+      initRecognition();
+      recognition.start();
+      isListening = true;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      drawWave();
+    };
+
+    stopBtn.onclick = () => {
+      isListening = false;
+      if (recognition) recognition.stop();
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      cancelAnimationFrame(animationId);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    };
+
+    exportBtn.onclick = () => {
+      const text = history.map(h => `[${h.time}] ${h.orig}\n→ ${h.trans}`).join('\n\n');
+      const blob = new Blob([text], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'lingopulse-transcript.txt';
+      a.click();
+    };
+
+    // Initial wave
+    drawWave(0.1);
+  </script>
+</body>
+</html>
